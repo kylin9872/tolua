@@ -2,15 +2,14 @@
 using System.Collections;
 using LuaInterface;
 
-public class TestCoroutine2 : MonoBehaviour 
+//两套协同勿交叉使用，类unity原生，大量使用效率低
+public class TestCoroutine2 : LuaClient 
 {
-    LuaState luaState = null;    
-
     string script =
     @"
         function CoExample()            
-            WaitForSeconds(2)
-            print('WaitForSeconds end time: '.. UnityEngine.Time.time)
+            WaitForSeconds(1)
+            print('WaitForSeconds end time: '.. UnityEngine.Time.time)            
             WaitForFixedUpdate()
             print('WaitForFixedUpdate end frameCount: '..UnityEngine.Time.frameCount)
             WaitForEndOfFrame()
@@ -27,34 +26,103 @@ public class TestCoroutine2 : MonoBehaviour
             print('coroutine over')
         end
 
-        function TestCo()
-            print('TestCo')
-            local co = coroutine.create(CoExample)
-                        
-            local flag, msg = coroutine.resume(co)
-            
-            if not flag then
-                error(msg)
-            end
+        function TestCo()            
+            StartCoroutine(CoExample)                                   
+        end
+
+        local coDelay = nil
+
+        function Delay()
+	        local c = 1
+
+	        while true do
+		        WaitForSeconds(1) 
+		        print('Count: '..c)
+		        c = c + 1
+	        end
+        end
+
+        function StartDelay()
+	        coDelay = StartCoroutine(Delay)            
+        end
+
+        function StopDelay()
+	        StopCoroutine(coDelay)
+            coDelay = nil
         end
     ";
 
-	void Awake () 
+    protected override LuaFileUtils InitLoader()
     {
-        luaState = new LuaState();
-        luaState.Start();
-        LuaBinder.Bind(luaState);
-        LuaCoroutine.Register(luaState, this);
+        return new LuaResLoader();
+    }
 
-        luaState.DoString(script);
+    protected override void OnLoadFinished()
+    {
+        base.OnLoadFinished();
+
+        luaState.DoString(script, "TestCoroutine2.cs");
         LuaFunction func = luaState.GetFunction("TestCo");
         func.Call();
         func.Dispose();
-	}
+        func = null;
+    }
 
-    void OnDestroy()
+    //屏蔽，例子不需要运行
+    protected override void CallMain() { }
+
+    bool beStart = false;
+    string tips = null;
+
+    void Start()
     {
-        luaState.Dispose();
-        luaState = null;
+#if UNITY_5 || UNITY_2017 || UNITY_2018
+        Application.logMessageReceived += ShowTips;
+#else
+        Application.RegisterLogCallback(ShowTips);
+#endif
+    }
+
+    void ShowTips(string msg, string stackTrace, LogType type)
+    {
+        tips += msg;
+        tips += "\r\n";
+    }
+
+    new void OnApplicationQuit()
+    {
+#if UNITY_5 || UNITY_2017 || UNITY_2018
+        Application.logMessageReceived -= ShowTips;
+#else
+        Application.RegisterLogCallback(null);
+#endif
+        base.OnApplicationQuit();
+    }
+
+    void OnGUI()
+    {
+        GUI.Label(new Rect(Screen.width / 2 - 300, Screen.height / 2 - 200, 600, 400), tips);
+
+        if (GUI.Button(new Rect(50, 50, 120, 45), "Start Counter"))
+        {
+            if (!beStart)
+            {
+                beStart = true;
+                tips = "";
+                LuaFunction func = luaState.GetFunction("StartDelay");
+                func.Call();
+                func.Dispose();
+            }
+        }
+        else if (GUI.Button(new Rect(50, 150, 120, 45), "Stop Counter"))
+        {
+            if (beStart)
+            {
+                beStart = false;
+                LuaFunction func = luaState.GetFunction("StopDelay");
+                func.Call();
+                func.Dispose();
+            }
+        }
     }
 }
